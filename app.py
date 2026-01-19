@@ -51,7 +51,7 @@ def get_categories_from_ai(business, industry):
     You are a marketing strategist. 
     For a business named '{business}' in the '{industry}' industry, 
     list 5 high-level categories where a customer might encounter this brand during a search.
-    Return ONLY a list of categories separated by commas. Do not number them.
+    Return ONLY a list of categories separated by commas. Do not number them. The categories should not include the actual '{business}' name.
     """
     try:
         response = model.generate_content(prompt)
@@ -67,7 +67,7 @@ def get_prompts_for_category(business, category):
     Act as a potential customer.
     Write 5 specific Google search queries related to the category '{category}' 
     that might lead someone to find the business '{business}'.
-    Return ONLY the 5 queries, one per line.
+    Return ONLY the 5 queries, one per line. The queries should never contain the actual '{business}' name.
     """
     try:
         response = model.generate_content(prompt)
@@ -213,18 +213,75 @@ if st.session_state.step == 4:
     st.session_state.step = 5
     st.rerun()
 
-# Phase 5: Results
+# --- PHASE 5: OUTPUT & ANALYSIS (UPDATED) ---
 if st.session_state.step == 5:
-    st.success("Complete!")
+    st.success("Simulation Complete!")
+    
+    # Create the DataFrame once
     df = pd.DataFrame(st.session_state.results)
+
+    # --- NEW: MENTIONS CALCULATOR ---
+    st.markdown("---")
+    st.header("📊 Mention Analysis")
     
-    # HTML Table for display
-    st.write(df[["Category", "Prompt", "Answer", "Citations_HTML"]].rename(columns={"Citations_HTML": "Citations"}).to_html(escape=False, index=False), unsafe_allow_html=True)
+    col_input, col_table = st.columns([1, 2])
     
-    # CSV Download
-    csv = df[["Category", "Prompt", "Answer", "Citations"]].to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV", csv, "results.csv", "text/csv")
+    with col_input:
+        st.markdown(f"**Primary Business:** {st.session_state.business_name}")
+        extra_keywords = st.text_area(
+            "Add Competitors / Keywords (comma separated):", 
+            placeholder="e.g. Nike, Adidas, price, quality"
+        )
     
-    if st.button("Restart"):
+    # Logic to calculate mentions
+    # 1. Start with the main business name
+    keywords_to_track = [st.session_state.business_name]
+    
+    # 2. Add user keywords if provided
+    if extra_keywords:
+        # Split by comma and remove whitespace
+        cleaned_extras = [k.strip() for k in extra_keywords.split(',') if k.strip()]
+        keywords_to_track.extend(cleaned_extras)
+        
+    # 3. Perform Counts
+    analysis_stats = []
+    for kw in keywords_to_track:
+        kw_lower = kw.lower()
+        # Count occurences (case insensitive)
+        # We assume values might be None, so we convert to str first
+        count_ans = df["Answer"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
+        count_cit = df["Citations"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
+        
+        analysis_stats.append({
+            "Keyword": kw,
+            "Mentions in Answers": count_ans,
+            "Mentions in Citations": count_cit,
+            "Total Volume": count_ans + count_cit
+        })
+        
+    # 4. Display Analysis Table
+    with col_table:
+        st.dataframe(
+            pd.DataFrame(analysis_stats), 
+            use_container_width=True, 
+            hide_index=True
+        )
+
+    st.markdown("---")
+    st.markdown("### Raw Data Results")
+    
+    # Display Main Data
+    st.dataframe(df)
+    
+    csv = df.to_csv(index=False).encode('utf-8')
+    
+    st.download_button(
+        label="Download Results as CSV",
+        data=csv,
+        file_name='llm_audit_results.csv',
+        mime='text/csv',
+    )
+    
+    if st.button("Start Over"):
         st.session_state.clear()
         st.rerun()
