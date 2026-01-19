@@ -6,20 +6,12 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Tool, grounding
 
 # --- CLOUD SETUP: KEY GENERATION ---
-# This block creates the key file from Streamlit Secrets
 if "GCP_CREDENTIALS" in st.secrets:
     try:
-        # Streamlit reads [GCP_CREDENTIALS] from secrets.toml as a Python dictionary automatically.
-        # We don't need json.loads() if we use the table format.
         secrets_obj = st.secrets["GCP_CREDENTIALS"]
-        
-        # Convert it to a standard dict (in case it's a specific Streamlit object)
         cred_dict = dict(secrets_obj)
-        
-        # Write to file so Vertex AI can find it
         with open("service_account_key.json", "w") as f:
             json.dump(cred_dict, f)
-            
     except Exception as e:
         st.error(f"Secrets Error: {e}")
         st.stop()
@@ -81,19 +73,17 @@ def run_simulation(prompt_text):
     try:
         response = model.generate_content(prompt_text, tools=[search_tool])
         
-        # Safe Dictionary Conversion
         try:
             response_dict = response.to_dict()
         except AttributeError:
-            return response.text, "Error parsing citations"
+            return response.text, []
 
-        # Answer Extraction
         candidates = response_dict.get('candidates', [])
-        if not candidates: return "No response", ""
+        if not candidates: return "No response", []
+        
         parts = candidates[0].get('content', {}).get('parts', [])
         answer = " ".join([p.get('text', '') for p in parts if 'text' in p])
 
-        # Citation Extraction
         citations_list = []
         seen_urls = set()
         grounding_meta = candidates[0].get('grounding_metadata', {})
@@ -188,32 +178,29 @@ if st.session_state.step == 4:
             bar.progress(count/total)
             ans, cits = run_simulation(item['Prompt'])
             
-            # Formatting
-            csv_links = []
-            html_links = []
+            # --- CHANGED: Plain Text Formatting (Title + URL) ---
+            formatted_citations = []
             if cits:
                 for c in cits:
-                    csv_links.append(f'=HYPERLINK("{c["url"]}", "{c["title"]}")')
-                    html_links.append(f'<a href="{c["url"]}" target="_blank">{c["title"]}</a>')
-                csv_cell = "\n".join(csv_links)
-                html_cell = "<br>".join(html_links)
+                    # Format: Title (URL)
+                    formatted_citations.append(f"{c['title']} ({c['url']})")
+                citations_cell = "\n".join(formatted_citations)
             else:
-                csv_cell = "No Citations"
-                html_cell = "No Citations"
+                citations_cell = "No Citations"
 
             data.append({
                 "Category": item["Category"],
                 "Prompt": item["Prompt"],
                 "Iteration": i+1,
                 "Answer": ans,
-                "Citations": csv_cell,
-                "Citations_HTML": html_cell
+                "Citations": citations_cell
+                # Citations_HTML removed entirely
             })
     st.session_state.results = data
     st.session_state.step = 5
     st.rerun()
 
-# --- PHASE 5: OUTPUT & ANALYSIS (UPDATED) ---
+# Phase 5: Results
 if st.session_state.step == 5:
     st.success("Simulation Complete!")
     
@@ -234,20 +221,15 @@ if st.session_state.step == 5:
         )
     
     # Logic to calculate mentions
-    # 1. Start with the main business name
     keywords_to_track = [st.session_state.business_name]
     
-    # 2. Add user keywords if provided
     if extra_keywords:
-        # Split by comma and remove whitespace
         cleaned_extras = [k.strip() for k in extra_keywords.split(',') if k.strip()]
         keywords_to_track.extend(cleaned_extras)
         
-    # 3. Perform Counts
     analysis_stats = []
     for kw in keywords_to_track:
         kw_lower = kw.lower()
-        # Count occurences (case insensitive)
         count_ans = df["Answer"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
         count_cit = df["Citations"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
         
@@ -258,7 +240,6 @@ if st.session_state.step == 5:
             "Total Volume": count_ans + count_cit
         })
         
-    # 4. Display Analysis Table
     with col_table:
         st.dataframe(
             pd.DataFrame(analysis_stats), 
@@ -269,27 +250,10 @@ if st.session_state.step == 5:
     st.markdown("---")
     st.markdown("### Raw Data Results")
     
-    # --- VISUAL CLEANUP ---
-    # 1. Create a copy for display only (so we don't break the CSV export)
-    display_df = df.copy()
-
-    # 2. Remove the HTML column
-    if "Citations_HTML" in display_df.columns:
-        display_df = display_df.drop(columns=["Citations_HTML"])
-
-    # 3. Clean the Citations column
-    # Convert '=HYPERLINK("url", "Title")' to just 'Title' using Regex
-    if "Citations" in display_df.columns:
-        display_df["Citations"] = display_df["Citations"].astype(str).str.replace(
-            r'=HYPERLINK\(".*?", "(.*?)"\)', 
-            r'\1', 
-            regex=True
-        )
-
-    # Display the Cleaned Data
-    st.dataframe(display_df)
+    # --- VISUAL CLEANUP (Simplified) ---
+    # We display the exact same dataframe that we download.
+    st.dataframe(df)
     
-    # Download the ORIGINAL Data (keeps the Excel Formulas working)
     csv = df.to_csv(index=False).encode('utf-8')
     
     st.download_button(
