@@ -248,7 +248,6 @@ if st.session_state.step == 5:
     for kw in keywords_to_track:
         kw_lower = kw.lower()
         # Count occurences (case insensitive)
-        # We assume values might be None, so we convert to str first
         count_ans = df["Answer"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
         count_cit = df["Citations"].fillna("").astype(str).str.lower().str.count(kw_lower).sum()
         
@@ -270,9 +269,27 @@ if st.session_state.step == 5:
     st.markdown("---")
     st.markdown("### Raw Data Results")
     
-    # Display Main Data
-    st.dataframe(df)
+    # --- VISUAL CLEANUP ---
+    # 1. Create a copy for display only (so we don't break the CSV export)
+    display_df = df.copy()
+
+    # 2. Remove the HTML column
+    if "Citations_HTML" in display_df.columns:
+        display_df = display_df.drop(columns=["Citations_HTML"])
+
+    # 3. Clean the Citations column
+    # Convert '=HYPERLINK("url", "Title")' to just 'Title' using Regex
+    if "Citations" in display_df.columns:
+        display_df["Citations"] = display_df["Citations"].astype(str).str.replace(
+            r'=HYPERLINK\(".*?", "(.*?)"\)', 
+            r'\1', 
+            regex=True
+        )
+
+    # Display the Cleaned Data
+    st.dataframe(display_df)
     
+    # Download the ORIGINAL Data (keeps the Excel Formulas working)
     csv = df.to_csv(index=False).encode('utf-8')
     
     st.download_button(
